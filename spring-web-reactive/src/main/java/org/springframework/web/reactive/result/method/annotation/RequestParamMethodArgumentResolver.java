@@ -20,12 +20,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import reactor.core.publisher.Mono;
-
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.util.Assert;
+import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ValueConstants;
@@ -57,6 +57,17 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueSyncAr
 
 
 	/**
+	 * Class constructor.
+	 * @param beanFactory a bean factory used for resolving  ${...} placeholder
+	 * and #{...} SpEL expressions in default values, or {@code null} if default
+	 * values are not expected to contain expressions
+	 */
+	public RequestParamMethodArgumentResolver(ConfigurableBeanFactory beanFactory) {
+		this(beanFactory, false);
+	}
+
+	/**
+	 * Class constructor with a default resolution mode flag.
 	 * @param beanFactory a bean factory used for resolving  ${...} placeholder
 	 * and #{...} SpEL expressions in default values, or {@code null} if default
 	 * values are not expected to contain expressions
@@ -65,7 +76,9 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueSyncAr
 	 * is treated as a request parameter even if it isn't annotated, the
 	 * request parameter name is derived from the method parameter name.
 	 */
-	public RequestParamMethodArgumentResolver(ConfigurableBeanFactory beanFactory, boolean useDefaultResolution) {
+	public RequestParamMethodArgumentResolver(ConfigurableBeanFactory beanFactory,
+			boolean useDefaultResolution) {
+
 		super(beanFactory);
 		this.useDefaultResolution = useDefaultResolution;
 	}
@@ -95,12 +108,18 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueSyncAr
 	protected Optional<Object> resolveNamedValue(String name, MethodParameter parameter,
 			ServerWebExchange exchange) {
 
-		List<String> paramValues = exchange.getRequest().getQueryParams().get(name);
+		List<String> paramValues = getRequestParams(exchange).get(name);
 		Object result = null;
 		if (paramValues != null) {
 			result = (paramValues.size() == 1 ? paramValues.get(0) : paramValues);
 		}
 		return Optional.ofNullable(result);
+	}
+
+	private MultiValueMap<String, String> getRequestParams(ServerWebExchange exchange) {
+		MultiValueMap<String, String> params = exchange.getRequestParams().subscribe().peek();
+		Assert.notNull(params, "Expected form data (if any) to be parsed.");
+		return params;
 	}
 
 	@Override

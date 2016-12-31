@@ -41,9 +41,9 @@ public class MockClientHttpRequest extends AbstractClientHttpRequest {
 
 	private final DataBufferFactory bufferFactory = new DefaultDataBufferFactory();
 
-	private Publisher<DataBuffer> body;
+	private Flux<DataBuffer> body;
 
-	private Publisher<Publisher<DataBuffer>> bodyWithFlushes;
+	private Flux<Publisher<DataBuffer>> bodyWithFlushes;
 
 
 	public MockClientHttpRequest() {
@@ -90,15 +90,15 @@ public class MockClientHttpRequest extends AbstractClientHttpRequest {
 	}
 
 	@Override
-	public Mono<Void> writeWith(Publisher<DataBuffer> body) {
-		this.body = body;
-		return applyBeforeCommit().then(Flux.from(this.body).then());
+	public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
+		this.body = Flux.from(body);
+		return doCommit(() -> this.body.then());
 	}
 
 	@Override
-	public Mono<Void> writeAndFlushWith(Publisher<Publisher<DataBuffer>> body) {
-		this.bodyWithFlushes = body;
-		return applyBeforeCommit().then(Flux.from(this.bodyWithFlushes).then());
+	public Mono<Void> writeAndFlushWith(Publisher<? extends Publisher<? extends DataBuffer>> body) {
+		this.bodyWithFlushes = Flux.from(body).map(p -> Flux.from(p));
+		return doCommit(() -> this.bodyWithFlushes.then());
 	}
 
 	public Publisher<DataBuffer> getBody() {
@@ -111,12 +111,12 @@ public class MockClientHttpRequest extends AbstractClientHttpRequest {
 
 	@Override
 	public Mono<Void> setComplete() {
-		return applyBeforeCommit().then();
+		return doCommit().then();
 	}
 
 	@Override
-	protected void writeHeaders() { }
+	protected void applyHeaders() { }
 
 	@Override
-	protected void writeCookies() { }
+	protected void applyCookies() { }
 }

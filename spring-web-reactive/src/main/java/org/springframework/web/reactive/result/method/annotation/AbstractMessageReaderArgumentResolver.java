@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.web.reactive.result.method.annotation;
 
 import java.lang.annotation.Annotation;
@@ -38,8 +39,9 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.util.Assert;
 import org.springframework.validation.Validator;
 import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.WebExchangeDataBinder;
-import org.springframework.web.reactive.result.method.BindingContext;
+import org.springframework.web.bind.support.WebExchangeBindException;
+import org.springframework.web.bind.support.WebExchangeDataBinder;
+import org.springframework.web.reactive.BindingContext;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.ServerWebInputException;
 import org.springframework.web.server.UnsupportedMediaTypeStatusException;
@@ -110,7 +112,7 @@ public abstract class AbstractMessageReaderArgumentResolver {
 			BindingContext bindingContext, ServerWebExchange exchange) {
 
 		ResolvableType bodyType = ResolvableType.forMethodParameter(bodyParameter);
-		ReactiveAdapter adapter = getAdapterRegistry().getAdapterTo(bodyType.resolve());
+		ReactiveAdapter adapter = getAdapterRegistry().getAdapter(bodyType.resolve());
 
 		ResolvableType elementType = ResolvableType.forMethodParameter(bodyParameter);
 		if (adapter != null) {
@@ -128,7 +130,7 @@ public abstract class AbstractMessageReaderArgumentResolver {
 
 			if (reader.canRead(elementType, mediaType)) {
 				Map<String, Object> readHints = Collections.emptyMap();
-				if (adapter != null && adapter.getDescriptor().isMultiValue()) {
+				if (adapter != null && adapter.isMultiValue()) {
 					Flux<?> flux;
 					if (reader instanceof ServerHttpMessageReader) {
 						ServerHttpMessageReader<?> serverReader = ((ServerHttpMessageReader<?>) reader);
@@ -184,7 +186,7 @@ public abstract class AbstractMessageReaderArgumentResolver {
 	}
 
 	protected boolean checkRequired(ReactiveAdapter adapter, boolean isBodyRequired) {
-		return adapter != null && !adapter.getDescriptor().supportsEmpty() || isBodyRequired;
+		return adapter != null && !adapter.supportsEmpty() || isBodyRequired;
 	}
 
 	protected ServerWebInputException getRequiredBodyError(MethodParameter parameter) {
@@ -216,7 +218,7 @@ public abstract class AbstractMessageReaderArgumentResolver {
 		WebExchangeDataBinder binder = binding.createDataBinder(exchange, target, name);
 		binder.validate(validationHints);
 		if (binder.getBindingResult().hasErrors()) {
-			throw new ServerWebInputException("Validation failed", param);
+			throw new WebExchangeBindException(param, binder.getBindingResult());
 		}
 	}
 

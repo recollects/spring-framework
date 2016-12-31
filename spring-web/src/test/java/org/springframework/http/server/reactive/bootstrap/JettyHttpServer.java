@@ -20,7 +20,6 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
-import org.jetbrains.annotations.NotNull;
 
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.http.server.reactive.ServletHttpHandlerAdapter;
@@ -33,6 +32,8 @@ public class JettyHttpServer extends HttpServerSupport implements HttpServer, In
 
 	private Server jettyServer;
 
+	private ServletContextHandler contextHandler;
+
 	private boolean running;
 
 
@@ -43,8 +44,9 @@ public class JettyHttpServer extends HttpServerSupport implements HttpServer, In
 		ServletHttpHandlerAdapter servlet = initServletHttpHandlerAdapter();
 		ServletHolder servletHolder = new ServletHolder(servlet);
 
-		ServletContextHandler contextHandler = new ServletContextHandler(this.jettyServer, "", false, false);
-		contextHandler.addServlet(servletHolder, "/");
+		this.contextHandler = new ServletContextHandler(this.jettyServer, "", false, false);
+		this.contextHandler.addServlet(servletHolder, "/");
+		this.contextHandler.start();
 
 		ServerConnector connector = new ServerConnector(this.jettyServer);
 		connector.setHost(getHost());
@@ -52,7 +54,6 @@ public class JettyHttpServer extends HttpServerSupport implements HttpServer, In
 		this.jettyServer.addConnector(connector);
 	}
 
-	@NotNull
 	private ServletHttpHandlerAdapter initServletHttpHandlerAdapter() {
 		if (getHttpHandlerMap() != null) {
 			return new ServletHttpHandlerAdapter(getHttpHandlerMap());
@@ -81,11 +82,24 @@ public class JettyHttpServer extends HttpServerSupport implements HttpServer, In
 		if (this.running) {
 			try {
 				this.running = false;
-				jettyServer.stop();
-				jettyServer.destroy();
+				if (this.contextHandler.isRunning()) {
+					this.contextHandler.stop();
+				}
 			}
 			catch (Exception ex) {
 				throw new IllegalStateException(ex);
+			}
+			finally {
+				try {
+					if (this.jettyServer.isRunning()) {
+						this.jettyServer.setStopTimeout(5000);
+						this.jettyServer.stop();
+						this.jettyServer.destroy();
+					}
+				}
+				catch (Exception ex) {
+					throw new IllegalStateException(ex);
+				}
 			}
 		}
 	}

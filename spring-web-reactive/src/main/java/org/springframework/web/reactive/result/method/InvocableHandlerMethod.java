@@ -32,16 +32,16 @@ import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.GenericTypeResolver;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.ParameterNameDiscoverer;
-import org.springframework.ui.ModelMap;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.reactive.BindingContext;
 import org.springframework.web.reactive.HandlerResult;
 import org.springframework.web.server.ServerWebExchange;
 
 /**
- * A sub-class of {@link HandlerMethod} that can resolve method arguments from
+ * A subclass of {@link HandlerMethod} that can resolve method arguments from
  * a {@link ServerWebExchange} and use that to invoke the underlying method.
  *
  * @author Rossen Stoyanchev
@@ -101,9 +101,8 @@ public class InvocableHandlerMethod extends HandlerMethod {
 		return resolveArguments(exchange, bindingContext, providedArgs).then(args -> {
 			try {
 				Object value = doInvoke(args);
-				ModelMap model = bindingContext.getModel();
-				HandlerResult handlerResult = new HandlerResult(this, value, getReturnType(), model);
-				return Mono.just(handlerResult);
+				HandlerResult result = new HandlerResult(this, value, getReturnType(), bindingContext);
+				return Mono.just(result);
 			}
 			catch (InvocationTargetException ex) {
 				return Mono.error(ex.getTargetException());

@@ -19,6 +19,7 @@ package org.springframework.http.server.reactive;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -65,6 +66,8 @@ public abstract class AbstractServerHttpResponse implements ServerHttpResponse {
 	private final HttpHeaders headers;
 
 	private final MultiValueMap<String, ResponseCookie> cookies;
+
+	private Function<String, String> urlEncoder = url -> url;
 
 	private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
 
@@ -118,6 +121,16 @@ public abstract class AbstractServerHttpResponse implements ServerHttpResponse {
 	}
 
 	@Override
+	public String encodeUrl(String url) {
+		return (this.urlEncoder != null ? this.urlEncoder.apply(url) : url);
+	}
+
+	@Override
+	public void registerUrlEncoder(Function<String, String> encoder) {
+		this.urlEncoder = (this.urlEncoder != null ? this.urlEncoder.andThen(encoder) : encoder);
+	}
+
+	@Override
 	public void beforeCommit(Supplier<? extends Mono<Void>> action) {
 		if (action != null) {
 			this.commitActions.add(action);
@@ -125,13 +138,13 @@ public abstract class AbstractServerHttpResponse implements ServerHttpResponse {
 	}
 
 	@Override
-	public final Mono<Void> writeWith(Publisher<DataBuffer> body) {
+	public final Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
 		return new ChannelSendOperator<>(body,
 				writePublisher -> doCommit(() -> writeWithInternal(writePublisher)));
 	}
 
 	@Override
-	public final Mono<Void> writeAndFlushWith(Publisher<Publisher<DataBuffer>> body) {
+	public final Mono<Void> writeAndFlushWith(Publisher<? extends Publisher<? extends DataBuffer>> body) {
 		return new ChannelSendOperator<>(body,
 				writePublisher -> doCommit(() -> writeAndFlushWithInternal(writePublisher)));
 	}
@@ -186,14 +199,14 @@ public abstract class AbstractServerHttpResponse implements ServerHttpResponse {
 	 * Implement this method to write to the underlying the response.
 	 * @param body the publisher to write with
 	 */
-	protected abstract Mono<Void> writeWithInternal(Publisher<DataBuffer> body);
+	protected abstract Mono<Void> writeWithInternal(Publisher<? extends DataBuffer> body);
 
 	/**
 	 * Implement this method to write to the underlying the response, and flush after
 	 * each {@code Publisher<DataBuffer>}.
 	 * @param body the publisher to write and flush with
 	 */
-	protected abstract Mono<Void> writeAndFlushWithInternal(Publisher<Publisher<DataBuffer>> body);
+	protected abstract Mono<Void> writeAndFlushWithInternal(Publisher<? extends Publisher<? extends DataBuffer>> body);
 
 	/**
 	 * Implement this method to write the status code to the underlying response.

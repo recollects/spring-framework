@@ -776,6 +776,7 @@ public class DefaultListableBeanFactoryTests {
 	private void testSingleTestBean(ListableBeanFactory lbf) {
 		assertTrue("1 beans defined", lbf.getBeanDefinitionCount() == 1);
 		String[] names = lbf.getBeanDefinitionNames();
+		assertTrue(names != lbf.getBeanDefinitionNames());
 		assertTrue("Array length == 1", names.length == 1);
 		assertTrue("0th element == test", names[0].equals("test"));
 		TestBean tb = (TestBean) lbf.getBean("test");
@@ -2706,13 +2707,13 @@ public class DefaultListableBeanFactoryTests {
 		bf.addEmbeddedValueResolver(r3);
 		given(r1.resolveStringValue("A")).willReturn("B");
 		given(r2.resolveStringValue("B")).willReturn(null);
-		given(r3.resolveStringValue(isNull(String.class))).willThrow(new IllegalArgumentException());
+		given(r3.resolveStringValue(isNull())).willThrow(new IllegalArgumentException());
 
 		bf.resolveEmbeddedValue("A");
 
 		verify(r1).resolveStringValue("A");
 		verify(r2).resolveStringValue("B");
-		verify(r3, never()).resolveStringValue(isNull(String.class));
+		verify(r3, never()).resolveStringValue(isNull());
 	}
 
 	@Test

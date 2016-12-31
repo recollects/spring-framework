@@ -20,7 +20,8 @@ import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.springframework.util.Assert;
 import org.springframework.util.LinkedCaseInsensitiveMap;
@@ -385,6 +387,8 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 */
 	private static final Pattern ETAG_HEADER_VALUE_PATTERN = Pattern.compile("\\*|\\s*((W\\/)?(\"[^\"]*\"))\\s*,?");
 
+	private static final DecimalFormatSymbols DECIMAL_FORMAT_SYMBOLS = new DecimalFormatSymbols(Locale.ENGLISH);
+
 	private static TimeZone GMT = TimeZone.getTimeZone("GMT");
 
 
@@ -433,6 +437,69 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 */
 	public List<MediaType> getAccept() {
 		return MediaType.parseMediaTypes(get(ACCEPT));
+	}
+
+	/**
+	 * Set the acceptable language ranges, as specified by the
+	 * {@literal Accept-Language} header.
+	 * @see Locale.LanguageRange
+	 * @since 5.0
+	 */
+	public void setAcceptLanguage(List<Locale.LanguageRange> languages) {
+		Assert.notNull(languages, "'languages' must not be null");
+		DecimalFormat decimal = new DecimalFormat("0.0", DECIMAL_FORMAT_SYMBOLS);
+		List<String> values = languages.stream()
+				.map(range ->
+						range.getWeight() == Locale.LanguageRange.MAX_WEIGHT ?
+								range.getRange() :
+								range.getRange() + ";q=" + decimal.format(range.getWeight()))
+				.collect(Collectors.toList());
+		set(ACCEPT_LANGUAGE, toCommaDelimitedString(values));
+	}
+
+	/**
+	 * Return the acceptable language ranges from the
+	 * {@literal Accept-Language} header
+	 * <p>If you only need the most preferred locale use
+	 * {@link #getAcceptLanguageAsLocale()} or if you need to filter based on
+	 * a list of supporeted locales you can pass the returned list to
+	 * {@link Locale#filter(List, Collection)}.
+	 * @see Locale.LanguageRange
+	 * @since 5.0
+	 */
+	public List<Locale.LanguageRange> getAcceptLanguage() {
+		String value = getFirst(ACCEPT_LANGUAGE);
+		if (value != null) {
+			return Locale.LanguageRange.parse(value);
+		}
+		return Collections.emptyList();
+	}
+
+	/**
+	 * A variant of {@link #setAcceptLanguage(List)} that sets the {@literal Accept-Language}
+	 * header value to the specified locale.
+	 * @since 5.0
+	 */
+	public void setAcceptLanguageAsLocale(Locale locale) {
+		setAcceptLanguage(Collections.singletonList(new Locale.LanguageRange(locale.toLanguageTag())));
+	}
+
+	/**
+	 * A variant of {@link #getAcceptLanguage()} that converts each
+	 * {@link java.util.Locale.LanguageRange} to a {@link Locale} and returns
+	 * the first one on the list.
+	 * @since 5.0
+	 */
+	public Locale getAcceptLanguageAsLocale() {
+		List<Locale.LanguageRange> ranges = getAcceptLanguage();
+		if (ranges.isEmpty()) {
+			return null;
+		}
+		return ranges.stream()
+				.map(range -> Locale.forLanguageTag(range.getRange()))
+				.filter(locale -> StringUtils.hasText(locale.getDisplayName()))
+				.findFirst()
+				.orElse(null);
 	}
 
 	/**
@@ -676,6 +743,8 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 * for {@code form-data}.
 	 * @param name the control name
 	 * @param filename the filename (may be {@code null})
+	 * @see #setContentDisposition(ContentDisposition)
+	 * @see #getContentDisposition()
 	 */
 	public void setContentDispositionFormData(String name, String filename) {
 		setContentDispositionFormData(name, filename, null);
@@ -689,24 +758,71 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 * @param filename the filename (may be {@code null})
 	 * @param charset the charset used for the filename (may be {@code null})
 	 * @since 4.3.3
-	 * @see #setContentDispositionFormData(String, String)
+	 * @see #setContentDisposition(ContentDisposition)
+	 * @see #getContentDisposition()
 	 * @see <a href="https://tools.ietf.org/html/rfc7230#section-3.2.4">RFC 7230 Section 3.2.4</a>
 	 */
 	public void setContentDispositionFormData(String name, String filename, Charset charset) {
 		Assert.notNull(name, "'name' must not be null");
-		StringBuilder builder = new StringBuilder("form-data; name=\"");
-		builder.append(name).append('\"');
-		if (filename != null) {
-			if(charset == null || StandardCharsets.US_ASCII.equals(charset)) {
-				builder.append("; filename=\"");
-				builder.append(filename).append('\"');
-			}
-			else {
-				builder.append("; filename*=");
-				builder.append(encodeHeaderFieldParam(filename, charset));
-			}
+		ContentDisposition disposition = ContentDisposition.builder("form-data")
+				.name(name).filename(filename, charset).build();
+		setContentDisposition(disposition);
+	}
+
+	/**
+	 * Set the (new) value of the {@literal Content-Disposition} header. Supports the
+	 * disposition type and {@literal filename}, {@literal filename*} (encoded according
+	 * to RFC 5987, only the US-ASCII, UTF-8 and ISO-8859-1 charsets are supported),
+	 * {@literal name}, {@literal size} parameters.
+	 * @since 5.0
+	 * @see #getContentDisposition()
+	 */
+	public void setContentDisposition(ContentDisposition contentDisposition) {
+		set(CONTENT_DISPOSITION, contentDisposition.toString());
+	}
+
+	/**
+	 * Return the {@literal Content-Disposition} header parsed as a {@link ContentDisposition}
+	 * instance. Supports the disposition type and {@literal filename}, {@literal filename*}
+	 * (encoded according to RFC 5987, only the US-ASCII, UTF-8 and ISO-8859-1 charsets are
+	 * supported), {@literal name}, {@literal size} parameters.
+	 * @since 5.0
+	 * @see #setContentDisposition(ContentDisposition)
+	 */
+	public ContentDisposition getContentDisposition() {
+		String contentDisposition = getFirst(CONTENT_DISPOSITION);
+		if (contentDisposition != null) {
+			return ContentDisposition.parse(contentDisposition);
 		}
-		set(CONTENT_DISPOSITION, builder.toString());
+		return ContentDisposition.empty();
+	}
+
+	/**
+	 * Set the {@link Locale} of the content language,
+	 * as specified by the {@literal Content-Language} header.
+	 * <p>Use {@code set(CONTENT_LANGUAGE, ...)} if you need
+	 * to set multiple content languages.</p>
+	 * @since 5.0
+	 */
+	public void setContentLanguage(Locale locale) {
+		Assert.notNull(locale, "'locale' must not be null");
+		set(CONTENT_LANGUAGE, locale.toLanguageTag());
+	}
+
+	/**
+	 * Return the first {@link Locale} of the content languages,
+	 * as specified by the {@literal Content-Language} header.
+	 * <p>Returns {@code null} when the content language is unknown.
+	 * <p>Use {@code getValuesAsList(CONTENT_LANGUAGE)} if you need
+	 * to get multiple content languages.</p>
+	 * @since 5.0
+	 */
+	public Locale getContentLanguage() {
+		return getValuesAsList(CONTENT_LANGUAGE)
+				.stream()
+				.findFirst()
+				.map(Locale::forLanguageTag)
+				.orElse(null);
 	}
 
 	/**
@@ -1350,47 +1466,6 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 */
 	public static HttpHeaders readOnlyHttpHeaders(HttpHeaders headers) {
 		return new HttpHeaders(headers, true);
-	}
-
-	/**
-	 * Encode the given header field param as describe in RFC 5987.
-	 * @param input the header field param
-	 * @param charset the charset of the header field param string
-	 * @return the encoded header field param
-	 * @see <a href="https://tools.ietf.org/html/rfc5987">RFC 5987</a>
-	 */
-	static String encodeHeaderFieldParam(String input, Charset charset) {
-		Assert.notNull(input, "Input String should not be null");
-		Assert.notNull(charset, "Charset should not be null");
-		if (StandardCharsets.US_ASCII.equals(charset)) {
-			return input;
-		}
-		Assert.isTrue(StandardCharsets.UTF_8.equals(charset) || StandardCharsets.ISO_8859_1.equals(charset),
-				"Charset should be UTF-8 or ISO-8859-1");
-		byte[] source = input.getBytes(charset);
-		int len = source.length;
-		StringBuilder sb = new StringBuilder(len << 1);
-		sb.append(charset.name());
-		sb.append("''");
-		for (byte b : source) {
-			if (isRFC5987AttrChar(b)) {
-				sb.append((char) b);
-			}
-			else {
-				sb.append('%');
-				char hex1 = Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16));
-				char hex2 = Character.toUpperCase(Character.forDigit(b & 0xF, 16));
-				sb.append(hex1);
-				sb.append(hex2);
-			}
-		}
-		return sb.toString();
-	}
-
-	private static boolean isRFC5987AttrChar(byte c) {
-		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-				c == '!' || c == '#' || c == '$' || c == '&' || c == '+' || c == '-' ||
-				c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
 	}
 
 }

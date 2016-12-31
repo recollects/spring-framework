@@ -41,6 +41,10 @@ import org.springframework.web.server.ServerWebExchange;
  */
 public abstract class AbstractView implements View, ApplicationContextAware {
 
+	/** Well-known name for the RequestDataValueProcessor in the bean factory. */
+	public static final String REQUEST_DATA_VALUE_PROCESSOR_BEAN_NAME = "requestDataValueProcessor";
+
+
 	/** Logger that is available to subclasses */
 	protected final Log logger = LogFactory.getLog(getClass());
 
@@ -48,6 +52,8 @@ public abstract class AbstractView implements View, ApplicationContextAware {
 	private final List<MediaType> mediaTypes = new ArrayList<>(4);
 
 	private Charset defaultCharset = StandardCharsets.UTF_8;
+
+	private String requestContextAttribute;
 
 	private ApplicationContext applicationContext;
 
@@ -95,6 +101,21 @@ public abstract class AbstractView implements View, ApplicationContextAware {
 		return this.defaultCharset;
 	}
 
+	/**
+	 * Set the name of the RequestContext attribute for this view.
+	 * Default is none.
+	 */
+	public void setRequestContextAttribute(String requestContextAttribute) {
+		this.requestContextAttribute = requestContextAttribute;
+	}
+
+	/**
+	 * Return the name of the RequestContext attribute, if any.
+	 */
+	public String getRequestContextAttribute() {
+		return this.requestContextAttribute;
+	}
+
 	@Override
 	public void setApplicationContext(ApplicationContext applicationContext) {
 		this.applicationContext = applicationContext;
@@ -126,6 +147,12 @@ public abstract class AbstractView implements View, ApplicationContextAware {
 		}
 
 		Map<String, Object> mergedModel = getModelAttributes(model, exchange);
+
+		// Expose RequestContext?
+		if (this.requestContextAttribute != null) {
+			mergedModel.put(this.requestContextAttribute, createRequestContext(exchange, mergedModel));
+		}
+
 		return renderInternal(mergedModel, contentType, exchange);
 	}
 
@@ -143,6 +170,34 @@ public abstract class AbstractView implements View, ApplicationContextAware {
 		}
 
 		return attributes;
+	}
+
+	/**
+	 * Create a RequestContext to expose under the specified attribute name.
+	 * <p>The default implementation creates a standard RequestContext instance for the
+	 * given request and model. Can be overridden in subclasses for custom instances.
+	 * @param exchange current exchange
+	 * @param model combined output Map (never {@code null}),
+	 * with dynamic values taking precedence over static attributes
+	 * @return the RequestContext instance
+	 * @see #setRequestContextAttribute
+	 */
+	protected RequestContext createRequestContext(ServerWebExchange exchange, Map<String, Object> model) {
+		return new RequestContext(exchange, model, getApplicationContext(), getRequestDataValueProcessor());
+	}
+
+	/**
+	 * Return the {@link RequestDataValueProcessor} to use.
+	 * <p>The default implementation looks in the {@link #getApplicationContext()
+	 * Spring configuration} for a {@code RequestDataValueProcessor} bean with
+	 * the name {@link #REQUEST_DATA_VALUE_PROCESSOR_BEAN_NAME}.
+	 */
+	protected RequestDataValueProcessor getRequestDataValueProcessor() {
+		if (getApplicationContext() != null) {
+			String beanName = REQUEST_DATA_VALUE_PROCESSOR_BEAN_NAME;
+			return getApplicationContext().getBean(beanName, RequestDataValueProcessor.class);
+		}
+		return null;
 	}
 
 	/**
