@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,6 @@
  */
 package org.springframework.web.servlet.mvc.method.annotation;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
-import static org.springframework.web.servlet.mvc.method.annotation.SseEmitter.*;
-
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
@@ -29,6 +25,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.springframework.core.MethodParameter;
+import org.springframework.core.ReactiveAdapterRegistry;
+import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.StringHttpMessageConverter;
@@ -36,6 +35,7 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.mock.web.test.MockAsyncContext;
 import org.springframework.mock.web.test.MockHttpServletRequest;
 import org.springframework.mock.web.test.MockHttpServletResponse;
+import org.springframework.web.accept.ContentNegotiationManager;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.async.AsyncWebRequest;
@@ -43,9 +43,12 @@ import org.springframework.web.context.request.async.StandardServletAsyncWebRequ
 import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.method.support.ModelAndViewContainer;
 
+import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for ResponseBodyEmitterReturnValueHandler.
+ *
  * @author Rossen Stoyanchev
  */
 public class ResponseBodyEmitterReturnValueHandlerTests {
@@ -60,8 +63,7 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 
 
 	@Before
-	public void setUp() throws Exception {
-
+	public void setup() throws Exception {
 		List<HttpMessageConverter<?>> converters = Arrays.asList(
 				new StringHttpMessageConverter(), new MappingJackson2HttpMessageConverter());
 
@@ -74,6 +76,7 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 		WebAsyncUtils.getAsyncManager(this.webRequest).setAsyncWebRequest(asyncWebRequest);
 		this.request.setAsyncSupported(true);
 	}
+
 
 	@Test
 	public void supportsReturnType() throws Exception {
@@ -158,7 +161,8 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 		bean2.setId(2L);
 		bean2.setName("John");
 
-		emitter.send(event().comment("a test").name("update").id("1").reconnectTime(5000L).data(bean1).data(bean2));
+		emitter.send(SseEmitter.event().
+				comment("a test").name("update").id("1").reconnectTime(5000L).data(bean1).data(bean2));
 
 		assertEquals(":a test\n" +
 						"event:update\n" +
@@ -193,6 +197,7 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 		assertEquals(Collections.singletonList("bar"), this.response.getHeaders("foo"));
 	}
 
+
 	private void handleReturnValue(Object returnValue, MethodParameter returnType) throws Exception {
 		ModelAndViewContainer mavContainer = new ModelAndViewContainer();
 		this.handler.handleReturnValue(returnValue, returnType, mavContainer, this.webRequest);
@@ -202,7 +207,6 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 		Method method = TestController.class.getDeclaredMethod(methodName);
 		return new MethodParameter(method, -1);
 	}
-
 
 
 	@SuppressWarnings("unused")
@@ -235,8 +239,8 @@ public class ResponseBodyEmitterReturnValueHandlerTests {
 		private ResponseEntity handleRawResponseEntity() {
 			return null;
 		}
-
 	}
+
 
 	private static class SimpleBean {
 

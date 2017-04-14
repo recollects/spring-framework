@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@
 package org.springframework.http.server.reactive;
 
 import java.io.IOException;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.logging.Log;
@@ -27,6 +26,8 @@ import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import reactor.core.publisher.Operators;
+
+import org.springframework.util.Assert;
 
 /**
  * Abstract base class for {@code Publisher} implementations that bridge between
@@ -48,7 +49,11 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 
 	private final AtomicReference<State> state = new AtomicReference<>(State.UNSUBSCRIBED);
 
-	private final AtomicLong demand = new AtomicLong();
+	private volatile long demand;
+
+	@SuppressWarnings("rawtypes")
+	private static final AtomicLongFieldUpdater<AbstractListenerReadPublisher> DEMAND_FIELD_UPDATER =
+			AtomicLongFieldUpdater.newUpdater(AbstractListenerReadPublisher.class, "demand");
 
 	private Subscriber<? super T> subscriber;
 
@@ -90,8 +95,8 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 	 * Listeners can call this to notify when a read error has occurred.
 	 */
 	public final void onError(Throwable t) {
-		if (this.logger.isErrorEnabled()) {
-			this.logger.error(this.state + " onError: " + t, t);
+		if (this.logger.isTraceEnabled()) {
+			this.logger.trace(this.state + " onError: " + t);
 		}
 		this.state.get().onError(this, t);
 	}
@@ -112,10 +117,13 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 	 * @return {@code true} if there is more demand; {@code false} otherwise
 	 */
 	private boolean readAndPublish() throws IOException {
-		while (hasDemand()) {
+		long r;
+		while ((r = demand) > 0) {
 			T data = read();
 			if (data != null) {
-				getAndSub(this.demand, 1L);
+				if (r != Long.MAX_VALUE) {
+					DEMAND_FIELD_UPDATER.addAndGet(this, -1L);
+				}
 				this.subscriber.onNext(data);
 			}
 			else {
@@ -123,31 +131,6 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 			}
 		}
 		return false;
-	}
-
-	/**
-	 * Concurrent subscription bound to 0 and Long.MAX_VALUE.
-	 * Any concurrent write will "happen" before this operation.
-	 * @param sequence current atomic to update
-	 * @param toSub delta to sub
-	 * @return value before subscription, 0 or Long.MAX_VALUE
-	 */
-	private static long getAndSub(AtomicLong sequence, long toSub) {
-		long r;
-		long u;
-		do {
-			r = sequence.get();
-			if (r == 0 || r == Long.MAX_VALUE) {
-				return r;
-			}
-			u = Operators.subOrZero(r, toSub);
-		} while (!sequence.compareAndSet(r, u));
-
-		return r;
-	}
-
-	private boolean hasDemand() {
-		return (this.demand.get() > 0);
 	}
 
 	private boolean changeState(State oldState, State newState) {
@@ -214,7 +197,8 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 		UNSUBSCRIBED {
 			@Override
 			<T> void subscribe(AbstractListenerReadPublisher<T> publisher, Subscriber<? super T> subscriber) {
-				Objects.requireNonNull(subscriber);
+				Assert.notNull(publisher, "Publisher must not be null");
+				Assert.notNull(subscriber, "Subscriber must not be null");
 				if (publisher.changeState(this, NO_DEMAND)) {
 					Subscription subscription = new ReadSubscription(publisher);
 					publisher.subscriber = subscriber;
@@ -236,7 +220,7 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 			@Override
 			<T> void request(AbstractListenerReadPublisher<T> publisher, long n) {
 				if (Operators.checkRequest(n, publisher.subscriber)) {
-					Operators.addAndGet(publisher.demand, n);
+					Operators.addAndGet(DEMAND_FIELD_UPDATER, publisher, n);
 					if (publisher.changeState(this, DEMAND)) {
 						publisher.checkOnDataAvailable();
 					}
@@ -254,7 +238,7 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 			@Override
 			<T> void request(AbstractListenerReadPublisher<T> publisher, long n) {
 				if (Operators.checkRequest(n, publisher.subscriber)) {
-					Operators.addAndGet(publisher.demand, n);
+					Operators.addAndGet(DEMAND_FIELD_UPDATER, publisher, n);
 				}
 			}
 
@@ -282,7 +266,7 @@ public abstract class AbstractListenerReadPublisher<T> implements Publisher<T> {
 			@Override
 			<T> void request(AbstractListenerReadPublisher<T> publisher, long n) {
 				if (Operators.checkRequest(n, publisher.subscriber)) {
-					Operators.addAndGet(publisher.demand, n);
+					Operators.addAndGet(DEMAND_FIELD_UPDATER, publisher, n);
 				}
 			}
 		},

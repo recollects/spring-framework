@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.undertow.server.handlers.CookieImpl;
 import io.undertow.util.HttpString;
 import org.reactivestreams.Processor;
 import org.reactivestreams.Publisher;
-import org.xnio.ChannelListener;
+import org.xnio.channels.Channels;
 import org.xnio.channels.StreamSinkChannel;
 import reactor.core.publisher.Mono;
 
@@ -60,7 +60,7 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 
 	public UndertowServerHttpResponse(HttpServerExchange exchange, DataBufferFactory bufferFactory) {
 		super(bufferFactory);
-		Assert.notNull(exchange, "'exchange' is required.");
+		Assert.notNull(exchange, "HttpServerExchange is required");
 		this.exchange = exchange;
 	}
 
@@ -68,6 +68,7 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 	public HttpServerExchange getUndertowExchange() {
 		return this.exchange;
 	}
+
 
 	@Override
 	protected void applyStatusCode() {
@@ -79,24 +80,28 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 
 	@Override
 	public Mono<Void> writeWith(File file, long position, long count) {
-		applyHeaders();
-		applyCookies();
-		try {
-			StreamSinkChannel responseChannel = getUndertowExchange().getResponseChannel();
-			@SuppressWarnings("resource")
-			FileChannel in = new FileInputStream(file).getChannel();
-			long result = responseChannel.transferFrom(in, position, count);
-			if (result < count) {
-				return Mono.error(new IOException(
-						"Could only write " + result + " out of " + count + " bytes"));
-			}
-			else {
+		return doCommit(() -> {
+			FileChannel source = null;
+			try {
+				source = new FileInputStream(file).getChannel();
+				StreamSinkChannel destination = getUndertowExchange().getResponseChannel();
+				Channels.transferBlocking(destination, source, position, count);
 				return Mono.empty();
 			}
-		}
-		catch (IOException ex) {
-			return Mono.error(ex);
-		}
+			catch (IOException ex) {
+				return Mono.error(ex);
+			}
+			finally {
+				if (source != null) {
+					try {
+						source.close();
+					}
+					catch (IOException ex) {
+						// ignore
+					}
+				}
+			}
+		});
 	}
 
 	@Override
@@ -145,15 +150,13 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 
 		private volatile ByteBuffer byteBuffer;
 
-
 		public ResponseBodyProcessor(StreamSinkChannel channel) {
 			Assert.notNull(channel, "StreamSinkChannel must not be null");
 			this.channel = channel;
 		}
 
-
 		public void registerListener() {
-			this.channel.getWriteSetter().set((ChannelListener<StreamSinkChannel>) c -> onWritePossible());
+			this.channel.getWriteSetter().set(c -> onWritePossible());
 			this.channel.resumeWrites();
 		}
 
@@ -199,7 +202,7 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 		@Override
 		protected void releaseData() {
 			if (logger.isTraceEnabled()) {
-				logger.trace("releaseBuffer: " + this.currentData);
+				logger.trace("releaseData: " + this.currentData);
 			}
 			DataBufferUtils.release(this.currentData);
 			this.currentData = null;
@@ -209,9 +212,10 @@ public class UndertowServerHttpResponse extends AbstractListenerServerHttpRespon
 
 		@Override
 		protected boolean isDataEmpty(DataBuffer dataBuffer) {
-			return dataBuffer.readableByteCount() == 0;
+			return (dataBuffer.readableByteCount() == 0);
 		}
 	}
+
 
 	private class ResponseBodyFlushProcessor extends AbstractListenerWriteFlushProcessor<DataBuffer> {
 

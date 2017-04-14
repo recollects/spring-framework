@@ -17,9 +17,10 @@
 package org.springframework.http.server.reactive;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 
 import io.undertow.connector.ByteBufferPool;
 import io.undertow.connector.PooledByteBuffer;
@@ -38,6 +39,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.util.Assert;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StringUtils;
 
 /**
  * Adapt {@link ServerHttpRequest} to the Undertow {@link HttpServerExchange}.
@@ -62,14 +64,10 @@ public class UndertowServerHttpRequest extends AbstractServerHttpRequest {
 
 	private static URI initUri(HttpServerExchange exchange) {
 		Assert.notNull(exchange, "HttpServerExchange is required.");
-		try {
-			return new URI(exchange.getRequestScheme(), null,
-					exchange.getHostName(), exchange.getHostPort(),
-					exchange.getRequestURI(), exchange.getQueryString(), null);
-		}
-		catch (URISyntaxException ex) {
-			throw new IllegalStateException("Could not get URI: " + ex.getMessage(), ex);
-		}
+		String requestURL = exchange.getRequestURL();
+		String query = exchange.getQueryString();
+		String requestUriAndQuery = StringUtils.isEmpty(query) ? requestURL : requestURL + "?" + query;
+		return URI.create(requestUriAndQuery);
 	}
 
 	private static HttpHeaders initHeaders(HttpServerExchange exchange) {
@@ -99,6 +97,11 @@ public class UndertowServerHttpRequest extends AbstractServerHttpRequest {
 			cookies.add(name, httpCookie);
 		}
 		return cookies;
+	}
+
+	@Override
+	public Optional<InetSocketAddress> getRemoteAddress() {
+		return Optional.ofNullable(this.exchange.getSourceAddress());
 	}
 
 	@Override

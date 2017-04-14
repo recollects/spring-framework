@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,9 @@
 package org.springframework.http.server.reactive;
 
 import java.io.IOException;
-import java.util.Map;
 import javax.servlet.AsyncContext;
+import javax.servlet.AsyncEvent;
+import javax.servlet.AsyncListener;
 import javax.servlet.Servlet;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletRequest;
@@ -28,6 +29,8 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
@@ -45,42 +48,36 @@ import org.springframework.util.Assert;
  */
 @WebServlet(asyncSupported = true)
 @SuppressWarnings("serial")
-public class ServletHttpHandlerAdapter extends HttpHandlerAdapterSupport implements Servlet {
+public class ServletHttpHandlerAdapter implements Servlet {
+
+	private static final Log logger = LogFactory.getLog(ServletHttpHandlerAdapter.class);
+
 
 	private static final int DEFAULT_BUFFER_SIZE = 8192;
+
+
+	private final HttpHandler httpHandler;
+
+	private int bufferSize = DEFAULT_BUFFER_SIZE;
 
 
 	// Servlet is based on blocking I/O, hence the usage of non-direct, heap-based buffers
 	// (i.e. 'false' as constructor argument)
 	private DataBufferFactory dataBufferFactory = new DefaultDataBufferFactory(false);
 
-	private int bufferSize = DEFAULT_BUFFER_SIZE;
-
 
 	public ServletHttpHandlerAdapter(HttpHandler httpHandler) {
-		super(httpHandler);
+		Assert.notNull(httpHandler, "HttpHandler must not be null");
+		this.httpHandler = httpHandler;
 	}
 
-	public ServletHttpHandlerAdapter(Map<String, HttpHandler> handlerMap) {
-		super(handlerMap);
-	}
-
-
-	public void setDataBufferFactory(DataBufferFactory dataBufferFactory) {
-		Assert.notNull(dataBufferFactory, "'dataBufferFactory' must not be null");
-		this.dataBufferFactory = dataBufferFactory;
-	}
-
-	public DataBufferFactory getDataBufferFactory() {
-		return this.dataBufferFactory;
-	}
 
 	/**
 	 * Set the size of the input buffer used for reading in bytes.
 	 * <p>By default this is set to 8192.
 	 */
 	public void setBufferSize(int bufferSize) {
-		Assert.isTrue(bufferSize > 0);
+		Assert.isTrue(bufferSize > 0, "Buffer size must be larger than zero");
 		this.bufferSize = bufferSize;
 	}
 
@@ -91,22 +88,63 @@ public class ServletHttpHandlerAdapter extends HttpHandlerAdapterSupport impleme
 		return this.bufferSize;
 	}
 
+	public void setDataBufferFactory(DataBufferFactory dataBufferFactory) {
+		Assert.notNull(dataBufferFactory, "DataBufferFactory must not be null");
+		this.dataBufferFactory = dataBufferFactory;
+	}
+
+	public DataBufferFactory getDataBufferFactory() {
+		return this.dataBufferFactory;
+	}
+
+
+	// The Servlet.service method
 
 	@Override
 	public void service(ServletRequest request, ServletResponse response) throws IOException {
-
 		// Start async before Read/WriteListener registration
 		AsyncContext asyncContext = request.startAsync();
 
-		ServerHttpRequest httpRequest = new ServletServerHttpRequest(
-				((HttpServletRequest) request), asyncContext, getDataBufferFactory(), getBufferSize());
+		ServerHttpRequest httpRequest = createRequest(((HttpServletRequest) request), asyncContext);
+		ServerHttpResponse httpResponse = createResponse(((HttpServletResponse) response), asyncContext);
 
-		ServerHttpResponse httpResponse = new ServletServerHttpResponse(
-				((HttpServletResponse) response), asyncContext, getDataBufferFactory(), getBufferSize());
+		asyncContext.addListener(TIMEOUT_HANDLER);
 
 		HandlerResultSubscriber subscriber = new HandlerResultSubscriber(asyncContext);
-		getHttpHandler().handle(httpRequest, httpResponse).subscribe(subscriber);
+		this.httpHandler.handle(httpRequest, httpResponse).subscribe(subscriber);
 	}
+
+	protected ServerHttpRequest createRequest(HttpServletRequest request,
+			AsyncContext context) throws IOException {
+
+		return new ServletServerHttpRequest(
+				request, context, getDataBufferFactory(), getBufferSize());
+	}
+
+	protected ServerHttpResponse createResponse(HttpServletResponse response,
+			AsyncContext context) throws IOException {
+
+		return new ServletServerHttpResponse(
+				response, context, getDataBufferFactory(), getBufferSize());
+	}
+
+	/**
+	 * We cannot combine TIMEOUT_HANDLER and HandlerResultSubscriber due to:
+	 * https://issues.jboss.org/browse/WFLY-8515
+	 */
+	private static void runIfAsyncNotComplete(AsyncContext asyncContext, Runnable task) {
+		try {
+			if (asyncContext.getRequest().isAsyncStarted()) {
+				task.run();
+			}
+		}
+		catch (IllegalStateException ex) {
+			// Ignore:
+			// AsyncContext recycled and should not be used
+			// e.g. TIMEOUT_LISTENER (above) may have completed the AsyncContext
+		}
+	}
+
 
 	// Other Servlet methods...
 
@@ -129,14 +167,40 @@ public class ServletHttpHandlerAdapter extends HttpHandlerAdapterSupport impleme
 	}
 
 
+	private final static AsyncListener TIMEOUT_HANDLER = new AsyncListener() {
+
+		@Override
+		public void onTimeout(AsyncEvent event) throws IOException {
+			AsyncContext context = event.getAsyncContext();
+			runIfAsyncNotComplete(context, context::complete);
+		}
+
+		@Override
+		public void onError(AsyncEvent event) throws IOException {
+			AsyncContext context = event.getAsyncContext();
+			runIfAsyncNotComplete(context, context::complete);
+		}
+
+		@Override
+		public void onStartAsync(AsyncEvent event) throws IOException {
+			// No-op
+		}
+
+		@Override
+		public void onComplete(AsyncEvent event) throws IOException {
+			// No-op
+		}
+	};
+
 	private class HandlerResultSubscriber implements Subscriber<Void> {
 
 		private final AsyncContext asyncContext;
 
 
-		public HandlerResultSubscriber(AsyncContext asyncContext) {
+		HandlerResultSubscriber(AsyncContext asyncContext) {
 			this.asyncContext = asyncContext;
 		}
+
 
 		@Override
 		public void onSubscribe(Subscription subscription) {
@@ -150,16 +214,20 @@ public class ServletHttpHandlerAdapter extends HttpHandlerAdapterSupport impleme
 
 		@Override
 		public void onError(Throwable ex) {
-			logger.error("Could not complete request", ex);
-			HttpServletResponse response = (HttpServletResponse) this.asyncContext.getResponse();
-			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-			this.asyncContext.complete();
+			runIfAsyncNotComplete(this.asyncContext, () -> {
+				logger.error("Could not complete request", ex);
+				HttpServletResponse response = (HttpServletResponse) this.asyncContext.getResponse();
+				response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+				this.asyncContext.complete();
+			});
 		}
 
 		@Override
 		public void onComplete() {
-			logger.debug("Successfully completed request");
-			this.asyncContext.complete();
+			runIfAsyncNotComplete(this.asyncContext, () -> {
+				logger.debug("Successfully completed request");
+				this.asyncContext.complete();
+			});
 		}
 	}
 

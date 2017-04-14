@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -442,7 +442,6 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	/**
 	 * Set the acceptable language ranges, as specified by the
 	 * {@literal Accept-Language} header.
-	 * @see Locale.LanguageRange
 	 * @since 5.0
 	 */
 	public void setAcceptLanguage(List<Locale.LanguageRange> languages) {
@@ -458,48 +457,43 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	}
 
 	/**
-	 * Return the acceptable language ranges from the
-	 * {@literal Accept-Language} header
-	 * <p>If you only need the most preferred locale use
-	 * {@link #getAcceptLanguageAsLocale()} or if you need to filter based on
-	 * a list of supporeted locales you can pass the returned list to
+	 * Return the language ranges from the {@literal "Accept-Language"} header.
+	 * <p>If you only need sorted, preferred locales only use
+	 * {@link #getAcceptLanguageAsLocales()} or if you need to filter based on
+	 * a list of supported locales you can pass the returned list to
 	 * {@link Locale#filter(List, Collection)}.
-	 * @see Locale.LanguageRange
 	 * @since 5.0
 	 */
 	public List<Locale.LanguageRange> getAcceptLanguage() {
 		String value = getFirst(ACCEPT_LANGUAGE);
-		if (value != null) {
-			return Locale.LanguageRange.parse(value);
-		}
-		return Collections.emptyList();
+		return value != null ? Locale.LanguageRange.parse(value) : Collections.emptyList();
 	}
 
 	/**
-	 * A variant of {@link #setAcceptLanguage(List)} that sets the {@literal Accept-Language}
-	 * header value to the specified locale.
+	 * Variant of {@link #setAcceptLanguage(List)} using {@link Locale}'s.
 	 * @since 5.0
 	 */
-	public void setAcceptLanguageAsLocale(Locale locale) {
-		setAcceptLanguage(Collections.singletonList(new Locale.LanguageRange(locale.toLanguageTag())));
+	public void setAcceptLanguageAsLocales(List<Locale> locales) {
+		setAcceptLanguage(locales.stream()
+				.map(locale -> new Locale.LanguageRange(locale.toLanguageTag()))
+				.collect(Collectors.toList()));
 	}
 
 	/**
 	 * A variant of {@link #getAcceptLanguage()} that converts each
-	 * {@link java.util.Locale.LanguageRange} to a {@link Locale} and returns
-	 * the first one on the list.
+	 * {@link java.util.Locale.LanguageRange} to a {@link Locale}.
+	 * @return the locales or an empty list
 	 * @since 5.0
 	 */
-	public Locale getAcceptLanguageAsLocale() {
+	public List<Locale> getAcceptLanguageAsLocales() {
 		List<Locale.LanguageRange> ranges = getAcceptLanguage();
 		if (ranges.isEmpty()) {
-			return null;
+			return Collections.emptyList();
 		}
 		return ranges.stream()
 				.map(range -> Locale.forLanguageTag(range.getRange()))
 				.filter(locale -> StringUtils.hasText(locale.getDisplayName()))
-				.findFirst()
-				.orElse(null);
+				.collect(Collectors.toList());
 	}
 
 	/**
@@ -1335,12 +1329,14 @@ public class HttpHeaders implements MultiValueMap<String, String>, Serializable 
 	 */
 	@Override
 	public void add(String headerName, String headerValue) {
-		List<String> headerValues = this.headers.get(headerName);
-		if (headerValues == null) {
-			headerValues = new LinkedList<>();
-			this.headers.put(headerName, headerValues);
-		}
+		List<String> headerValues = this.headers.computeIfAbsent(headerName, k -> new LinkedList<>());
 		headerValues.add(headerValue);
+	}
+
+	@Override
+	public void addAll(String key, List<String> values) {
+		List<String> currentValues = this.headers.computeIfAbsent(key, k -> new LinkedList<>());
+		currentValues.addAll(values);
 	}
 
 	/**

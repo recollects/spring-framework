@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package org.springframework.web.bind.support;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -25,8 +24,7 @@ import java.util.TreeMap;
 import reactor.core.publisher.Mono;
 
 import org.springframework.beans.MutablePropertyValues;
-import org.springframework.http.server.reactive.ServerHttpRequest;
-import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.multipart.MultipartFile;
@@ -74,7 +72,7 @@ public class WebExchangeDataBinder extends WebDataBinder {
 				.map(this::getParamsToBind)
 				.doOnNext(values -> values.putAll(getMultipartFiles(exchange)))
 				.doOnNext(values -> values.putAll(getExtraValuesToBind(exchange)))
-				.then(values -> {
+				.flatMap(values -> {
 					doBind(new MutablePropertyValues(values));
 					return Mono.empty();
 				});
@@ -85,16 +83,14 @@ public class WebExchangeDataBinder extends WebDataBinder {
 		for (Map.Entry<String, List<String>> entry : params.entrySet()) {
 			String name = entry.getKey();
 			List<String> values = entry.getValue();
-			if (values == null || values.isEmpty()) {
+			if (CollectionUtils.isEmpty(values)) {
 				// Do nothing, no values found at all.
 			}
+			else if (values.size() == 1) {
+				result.put(name, values.get(0));
+			}
 			else {
-				if (values.size() > 1) {
-					result.put(name, values);
-				}
-				else {
-					result.put(name, values.get(0));
-				}
+				result.put(name, values);
 			}
 		}
 		return result;
@@ -116,7 +112,7 @@ public class WebExchangeDataBinder extends WebDataBinder {
 	/**
 	 * Extension point that subclasses can use to add extra bind values for a
 	 * request. Invoked before {@link #doBind(MutablePropertyValues)}.
-	 * The default implementation is empty.
+	 * <p>The default implementation is empty.
 	 * @param exchange the current exchange
 	 */
 	protected Map<String, ?> getExtraValuesToBind(ServerWebExchange exchange) {
